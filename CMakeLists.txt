@@ -1,8 +1,6 @@
 cmake_minimum_required (VERSION 3.1)
 project (YODF5)
 
-find_package(xtl REQUIRED)
-find_package(xtensor REQUIRED)
 
 # The version number
 set (YODF5_VERSION_MAJOR 0)

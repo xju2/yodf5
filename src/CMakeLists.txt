@@ -29,6 +29,7 @@ include_directories(
     ${YODA_DIR}/include
     ${EIGEN3_INCLUDE_DIR}
 )
+add_subdirectory(libyodf5)
 
 add_subdirectory(test)
 add_subdirectory(utils)

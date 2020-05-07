@@ -1,6 +1,7 @@
 #include <iostream>
 #include <string>
 #include <vector>
+#include <algorithm>
 
 #include "xtensor/xarray.hpp"
 #include "xtensor/xio.hpp"
@@ -12,16 +13,14 @@
 #include <highfive/H5Easy.hpp>
 #include <highfive/H5Group.hpp>
 
-#include "const_keynames.hpp"
-#include "lhapdf_lookup.hpp"
+#include "yodf5/const_keynames.hpp"
+#include "yodf5/lhapdf_lookup.hpp"
 
 #include "LHAPDF/LHAPDF.h"
 
 
 // #include <bits/stdc++.h> 
 // #include <boost/algorithm/string.hpp> 
-
-using namespace std;
 
 void print_shape(const xt::xarray<double>& a) {
     const auto& s = a.shape();
@@ -94,12 +93,6 @@ xt::xarray<double> get_obs_values(string& file_name){
     return obs_values;
 }
 
-std::vector<std::string> getListOfVariations(std::string const & fname) {
-    H5Easy::File file(fname, H5Easy::File::ReadOnly);
-    auto vars = H5Easy::load<std::vector<std::string> >(file, "variations");
-    return vars;
-}
-
 void split(vector<string>& results, string input, string delimiter){
     std::string::size_type pos;
     while ( (pos = input.find(delimiter)) != std::string::npos) {
@@ -117,11 +110,35 @@ int get_pdf_id(std::string& variation) {
 }
 
 int main(int argc, char** argv) {
-    if (argc < 2) {
-        std::cout << argv[0] << " file-name" << std::endl;
-        return 1;
+    string filename = "Rivet.h5";
+    string output_filename = "Rivet_sys.h5";
+    bool help = false;
+    while ((opt = getopt(argc, argv, "hf:o:")) != -1) {
+        switch(opt) {
+            case 'f':
+                filename = optarg;
+                break;
+            case 'o':
+                output_filename = optarg;
+                break;
+            case 'h':
+                help = true;
+            default:
+                fprintf(stderr, "Usage: %s [-h] [-f FILENAME] [-o OUTPUT_FILENAME]\n", argv[0]);
+                if (help) {
+                    printf("    -f FILENAME : input HDF5 file. Default is \"Rivet.h5\"");
+                    printf("    -o OUTPUT_FILENAME : output HDF5 file. Default is \"Rivet_sys.h5\"");
+                    printf("    -h HELP : print help info");
+                }
+                exit(EXIT_FAILURE);
+        }
     }
-    std::string file_name(argv[1]);
+
+    std::ifstream f(filename);
+    if(!f.good()) {
+        std::cerr << "input file \"" << filename << "\" does not exist\n";
+        exit(EXIT_FAILURE);
+    }
 
     // read the h5 file
     H5Easy::File file(file_name, H5Easy::File::ReadOnly);

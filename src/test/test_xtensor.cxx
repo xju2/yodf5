@@ -12,8 +12,6 @@
 #include <highfive/H5Easy.hpp>
 #include <highfive/H5Group.hpp>
 
-#include "const_keynames.hpp"
-#include "lhapdf_lookup.hpp"
 #include <algorithm>
 
 

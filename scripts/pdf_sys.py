@@ -40,6 +40,18 @@ def get_pdf_id(variation):
     return int(variation.split('_')[-1][3:])
 
 
+def find_nomial_pdfid(input_h5):
+    variations = input_h5[variation_keyname]
+    nominal_pdf_id = -1
+    for idx, variation in enumerate(variations):
+        if "MUR1_MUF0.5" in variation:
+            nominal_pdf_id = get_pdf_id(variation)
+            break
+    if nominal_pdf_id < 0:
+        raise ValueError("Did not find nominal PDF ID")
+
+    return nominal_pdf_id
+
 def get_obs_values(input_h5):
     n_variations = input_h5[variation_keyname].shape[0]
     n_bins = input_h5[binid_keyname].shape[0]
@@ -86,6 +98,8 @@ def get_sys(input_h5_name):
     variations = input_h5[variation_keyname]
     n_variations = len(variations)
     print("total {} variations".format(n_variations))
+    # print(variations[:])
+    # return
 
     binids = input_h5[binid_keyname]
     print(binids.shape)
@@ -94,29 +108,29 @@ def get_sys(input_h5_name):
     print("total {} bins".format(n_bins))
 
 
-    nominal_pdf_name = "none"
-    nominal_pdf_id = -1
+    nominal_pdf_id = find_nomial_pdfid(input_h5)
+    nominal_pdf_name = pset_name(nominal_pdf_id)
+    scale_sys_name = "QCDScales"
+
     n_exp_internal_pdf_vars = -1
     pdfs_variations =  collections.defaultdict(lambda: 0)
-    pdfs_variation_idx =  collections.defaultdict(list)
-    external_pdfs = []
+    sys_variation_idx =  collections.defaultdict(list)
+
     for idx, variation in enumerate(variations):
-        if "MUR1_MUF0.5" in variation:
-            nominal_pdf_id = get_pdf_id(variation)
-            nominal_pdf_name = pset_name(nominal_pdf_id)
-            if not nominal_pdf_name:
-                raise ValueError("Did you find nominal PDF:", nominal_pdf_id)
         if "MUR1_MUF1" in variation:
             pdf_id = get_pdf_id(variation)
             pdf_name = pset_name(pdf_id)
             pdfs_variations[pdf_name] += 1
-            pdfs_variation_idx[pdf_name].append(idx)
+            sys_variation_idx[pdf_name].append(idx)
+
+        if str(nominal_pdf_id) in variation:
+            sys_variation_idx[scale_sys_name].append(idx)
 
     print("nominal PDF:", nominal_pdf_name)
     n_external_pdfs = 0
     for key,value in pdfs_variations.items():
         print("{}: {} variations".format(key, value))
-        print("\t", pdfs_variation_idx[key])
+        print("\t", sys_variation_idx[key])
         if key != nominal_pdf_name:
             n_external_pdfs += 1
     print("{} external PDFs".format(n_external_pdfs))
@@ -132,7 +146,7 @@ def get_sys(input_h5_name):
     nominal_pdf = lhapdf.getPDFSet(nominal_pdf_name)
     cl = 68
     internal_pdf_sys = np.apply_along_axis(
-        lambda x: nominal_pdf.uncertainty(x[pdfs_variation_idx[nominal_pdf_name]], cl).errsymm,
+        lambda x: nominal_pdf.uncertainty(x[sys_variation_idx[nominal_pdf_name]], cl).errsymm,
         1, obs_values)
     print(internal_pdf_sys[1])
     print(internal_pdf_sys.shape)
@@ -147,24 +161,34 @@ def get_sys(input_h5_name):
         if value > 1:
             this_pdf = lhapdf.getPDFSet(key)
             external_pdf_values[:, idx] = np.apply_along_axis(
-                lambda x: this_pdf.uncertainty(x[pdfs_variation_idx[key]], cl).central,
+                lambda x: this_pdf.uncertainty(x[sys_variation_idx[key]], cl).central,
                 1, obs_values)
         else:
-            external_pdf_values[:, idx] = obs_values[:, pdfs_variation_idx[key][0]]
+            external_pdf_values[:, idx] = obs_values[:, sys_variation_idx[key][0]]
         idx += 1
 
     external_diff = external_pdf_values - external_pdf_values[:, inorm].reshape(-1, 1)
-    print(np.any(np.nonzero(external_diff[:, inorm])))
+    # print(np.any(np.nonzero(external_diff[:, inorm])))
     external_pdf_sys = np.amax(external_diff, axis=1)
     pdf_sys[:, 0] = internal_pdf_sys
     pdf_sys[:, 1] = external_pdf_sys
     pdf_sys[:, 2] = np.amax(pdf_sys[:, 0:2], axis=1)
 
+    scale_diff = obs_values[:, sys_variation_idx[scale_sys_name]] - obs_values[:, 0].reshape(-1, 1)
+    scale_sys = np.amax(scale_diff, axis=1)
+
     out_file = h5py.File("Rivet_pdfsys.h5", 'w')
     out_file.create_dataset("pdfsys", data=pdf_sys, dtype=np.float32)
+    out_file.create_dataset("scalesys", data=scale_sys, dtype=np.float32)
     out_file.close()
 
     input_h5.close()
 
 if __name__ == "__main__":
-    get_sys('Rivet.h5')
+    import argparse
+    parser = argparse.ArgumentParser(description='calculate theory sys')
+    add_arg = parser.add_argument
+    add_arg("filename", help='input hdf5 file')
+    args = parser.parse_args()
+
+    get_sys(args.filename)

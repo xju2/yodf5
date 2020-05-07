@@ -24,7 +24,13 @@ if (NOT HIGHFIVE_DIR)
 endif ()
 
 if (NOT YODA_DIR)
+    message(WARNING "Need YODA_DIR to build program, set to /usr/local")
     set(YODA_DIR /usr/local)
+endif()
+
+if (NOT HDF5_INCLUDE_DIR)
+  message(WARNING "Need HDF5_INCLUDE_DIR to build program, set to /usr/include/mpich-x86_64")
+  set(HDF5_INCLUDE_DIR /usr/include/mpich-x86_64)
 endif()
 
 find_package(xtl REQUIRED)
@@ -34,7 +40,7 @@ find_package (Eigen3 3.3 REQUIRED NO_MODULE)
 # find_package(Boost)
 
 include_directories(
-    "/usr/include/mpich-x86_64"
+    ${HDF5_INCLUDE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${HIGHFIVE_DIR}/include
     ${YODA_DIR}/include

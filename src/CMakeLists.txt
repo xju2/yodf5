@@ -19,7 +19,7 @@ set                     (libraries ${libraries} ${HDF5_C_LIBRARIES} ${HDF5_CXX_L
 
 
 if (NOT HIGHFIVE_DIR)
-    message(WARNING "Need HighFive to build program --- check -DHIGHFIVE_DIR")
+    message(WARNING "Need HighFive to build program, set to /usr/local")
     set(HIGHFIVE_DIR /usr/local)
 endif ()
 

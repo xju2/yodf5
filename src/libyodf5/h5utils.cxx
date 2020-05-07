@@ -18,7 +18,7 @@
 namespace YODF5{
     namespace H5Utils {
 
-    void split(std::vector<std::string>& results, std::string input, std::string delimiter){
+    void split(std::vector<std::string>& results, std::string input, const std::string delimiter){
         std::string::size_type pos;
         while ( (pos = input.find(delimiter)) != std::string::npos) {
             results.push_back(input.substr(0, pos));
@@ -27,7 +27,7 @@ namespace YODF5{
         results.push_back(input);
     }
 
-    int get_pdf_id(std::string& variation) {
+    int get_pdf_id(const std::string& variation) {
         std::vector<std::string> items;
         items.clear();
         split(items, variation, "_");
@@ -99,6 +99,22 @@ namespace YODF5{
             }
             // cout << obs_values << endl;
             return obs_values;
+        }
+
+        int find_nominal_pdfid(const std::string& filename){
+            H5Easy::File file(filename, H5Easy::File::ReadOnly);
+            auto variations = H5Easy::load<std::vector<std::string>>(file, YODF5::VARIATIONS);
+            int nominal_pdf_id = -1;
+            for(const auto& variation: variations) {
+                if (variation.find("MUR1_MUF0.5") != std::string::npos) {
+                    nominal_pdf_id = get_pdf_id(variation);
+                    break;
+                }
+            }
+            if(nominal_pdf_id < 0) {
+                throw(std::range_error("Cannot find nominal PDF ID"));
+            }
+            return nominal_pdf_id;
         }
     };
 };

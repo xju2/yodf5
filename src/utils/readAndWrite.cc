@@ -1,25 +1,36 @@
 #include "YODA/ReaderYODA.h"
-#include "YODA/Histo1D.h"
+#include "YODA/YODA.h" // include all analysis objects
+
 #include <iostream>
 #include <regex>
 #include <unordered_map>
 #include <functional>
+#include <unistd.h>
+#include <fstream>
 
-#include "Eigen/Dense"
+#include "xtensor/xarray.hpp"
+#include "xtensor/xio.hpp"
 
-#include "boost/multi_array.hpp"
-#define H5_USE_BOOST
-#define H5_USE_EIGEN
+#define H5_USE_XTENSOR
 #include <highfive/H5Easy.hpp>
 #include <highfive/H5DataSet.hpp>
 #include <highfive/H5DataSpace.hpp>
 #include <highfive/H5File.hpp>
 
+#include "yodf5/const_keynames.hpp"
+// #include "yodf5/h5utils.hpp"
+
 using namespace YODA;
 using namespace std;
-using namespace Eigen;
+// using namespace Eigen;
 using namespace HighFive;
 
+
+template <typename T> 
+void print_shape(xt::xarray<T>& a){
+    const auto& s = a.shape();
+    std::copy(s.cbegin(), s.cend(), std::ostream_iterator<double>(std::cout, " "));
+}
 
 unordered_map< string, unordered_map< string, int> > myyodaindex(istream& stream_) {
 
@@ -168,7 +179,12 @@ inline vector<string> get_ao_names(const vector<AnalysisObject*>& aos, string co
     vector<string> aonames;
     for (auto ao : aos) 
     {
-        if (ao->type()==aotype &! ao->path().ends_with( ']')) aonames.push_back(ao->path());
+        if(aotype != YODF5::NA && ao->type() != aotype) {
+            continue;
+        }
+        if (! ao->path().ends_with( ']')) {
+            aonames.push_back(ao->path());
+        }
     }
     sort(aonames.begin(), aonames.end());
     return aonames;
@@ -201,23 +217,61 @@ unordered_map<string, int> mk_nbinmap(unordered_map<string, AnalysisObject* > ao
     return nbin_map;
 }
 
-inline vector<string> mk_binids(vector<AnalysisObject*> const & aos, vector<string> const & hnames) 
+string replaceall(const string& in_str, const string& source, const string& target) {
+    std::string::size_type pos;
+    std::string results(in_str);
+    while ( (pos = results.find(source)) != std::string::npos) {
+        results.replace(pos, source.size(), target);
+    }
+    return results;
+}
+
+int num_bins(AnalysisObject* ao){
+    string aotype = ao->type();
+    int nbins = 1;
+    if(aotype == YODF5::H1D) nbins = dynamic_cast<YODA::Histo1D*>(ao)->numBins();
+    else if(aotype == YODF5::H2D) nbins = dynamic_cast<YODA::Histo2D*>(ao)->numBins();
+    else if(aotype == YODF5::P1D) nbins = dynamic_cast<YODA::Profile1D*>(ao)->numBins();
+    else if(aotype == YODF5::S1D) nbins = dynamic_cast<YODA::Scatter1D*>(ao)->numPoints();
+    else if(aotype == YODF5::S2D) nbins = dynamic_cast<YODA::Scatter2D*>(ao)->numPoints();
+    else {
+        std::cerr << "Not known type: " << aotype << ". Number of bins set to 1." << std::endl;
+    }
+    return nbins;
+}
+
+inline vector<string> mk_binids(vector<AnalysisObject*> const & aos) 
 {
     vector<string> binids;
-    for (auto hn : hnames) {
-        for (auto ao : aos) 
-        {
-            if (ao->path() == hn) {
-                binids.push_back(hn+"#T");
-                binids.push_back(hn+"#O");
-                binids.push_back(hn+"#U");
-                for (int nb=0;nb<dynamic_cast<Histo1D*>(ao)->numBins();++nb) binids.push_back(hn+"#" + to_string(nb));
-                break;
+    for (auto ao : aos) {
+        auto hname = ao->path();
+        if(hname[hname.size()-1] == ']') continue; // ignore systematic variations
+        
+        std::string base = replaceall(hname, "/", "|");
+        vector<string> suffixes;
+        auto aotype = ao->type();
+        if (aotype == YODF5::H1D || aotype == YODF5::H2D || aotype == YODF5::P1D) {
+            // for histo-1d, 2d and profile 1d, add total, overflow and underflow bins
+            suffixes.push_back("T"); // total
+            suffixes.push_back("O"); // overflow
+            suffixes.push_back("U"); // underflow
+        }
+        if (aotype == YODF5::CNT) {
+            suffixes.push_back("0");
+        } else {
+            int n_bins = num_bins(ao);
+            for (int nb = 0; nb < n_bins; ++nb){
+                suffixes.push_back(to_string(nb));
             }
+        }
+        for(auto const & suffix: suffixes) {
+            binids.push_back(base+"#"+suffix);
         }
     }
     return binids;
 }
+
+
 
 inline vector<string> mk_binids(unordered_map<string, AnalysisObject* > aomap, vector<string> const & hnames) 
 {
@@ -247,101 +301,194 @@ inline vector<double> get_edge(unordered_map<string, AnalysisObject* > aomap, ve
     return edges;
 }
 
-boost::multi_array<double,2>  get_h1d_field(
-        unordered_map<string, AnalysisObject* > aomap, 
-        vector<string> const & hnames, vector<string> const & vars, size_t nbins,
-        unordered_map<string, int>  nbinsMap,
-        double (Dbn1D::*function)() const,
-        double (HistoBin1D::*function2)() const
-        )
-{
-    boost::multi_array<double, 2> field(boost::extents[nbins][vars.size()]);
-    size_t offset(0);
-    for (auto  hn : hnames) 
-    {
-        for (size_t j=0; j<vars.size();++j)
-        {
-            std::string varhname = (j>0) ? hn+"["+vars[j]+"]" : hn;
-            if (aomap.count(varhname)>0)
-            {
-                auto h = dynamic_cast<Histo1D*>(aomap[varhname]);
-                field[offset  ][j] = (h->totalDbn().*function)();
-                field[offset+1][j] = (h->overflow().*function)();
-                field[offset+2][j] = (h->underflow().*function)();
-                for (int nb=0;nb< h->numBins();++nb) field[offset + 3 + nb][j] = (h->bin(nb).*function2)();
-                if (j==vars.size()-1) offset += h->numBins() + 3;
-            }
-            else 
-            {
-                field[offset  ][j] = 0.0;
-                field[offset+1][j] = 0.0;
-                field[offset+2][j] = 0.0;
-                for (int nb=0;nb< nbinsMap[hn];++nb) field[offset + 3 + nb][j] = 0.0;
-                if (j==vars.size()-1) offset += nbinsMap[hn] + 3;
-            }
+void  fill_dataset(
+        H5Easy::File& file,
+        unordered_map<std::string, AnalysisObject*>& aomap,
+        std::string const & hname,
+        std::vector<std::string> const & binids,
+        std::vector<std::string> const & variations
+        ){
+    std::string _hname = replaceall(hname, "/", "|");
+	cout << hname << " --> " << _hname << endl;
+
+    // all results are saved in a matrix (nbins, n_variations)
+    // bin_idx saves the row index of this variable.
+    std::vector<int> bin_idx;
+    for(int i = 0; i < (int)binids.size(); i++){
+		string binid_basename = binids.at(i).substr(0, binids.at(i).find("#"));
+        if(binid_basename == _hname){
+            bin_idx.push_back(i);
+			cout <<" find: " << binids.at(i) << " for " << _hname << endl;
         }
     }
-    return field;
+    auto ao = aomap[hname];
+    std::string aotype = ao->type();
+    // H5Easy::dump(file, aotype+"/"+hname, bin_idx);
+	//
+	cout << bin_idx.size() << " " << variations.size() << endl;
+
+    long unsigned int n_bins = bin_idx.size();
+    long unsigned int n_variations = variations.size();
+    long unsigned int n_fields;
+
+    std::vector<std::string> field_keys;
+
+    if(aotype == YODF5::H1D){
+        field_keys.assign({
+            YODF5::SUMW, YODF5::SUMW2, YODF5::SUMWX, YODF5::SUMWX2, 
+            YODF5::NUMENTRIES, YODF5::XMIN, YODF5::XMAX});
+    } else if (aotype == YODF5::H2D) {
+        field_keys.assign({
+            YODF5::SUMW, YODF5::SUMW2, YODF5::SUMWX, YODF5::SUMWX2,
+            YODF5::SUMWY, YODF5::SUMWY2,
+            YODF5::SUMWXY,
+            YODF5::NUMENTRIES, YODF5::XMIN, YODF5::XMAX,
+            YODF5::YMIN, YODF5::YMAX});
+    } else if (aotype == YODF5::P1D) {
+        field_keys.assign({
+            YODF5::SUMW, YODF5::SUMW2, YODF5::SUMWX, YODF5::SUMWX2,
+            YODF5::SUMWY, YODF5::SUMWY2,
+            YODF5::NUMENTRIES, YODF5::XMIN, YODF5::XMAX});
+    } else if (aotype == YODF5::S1D) {
+        field_keys.assign({
+            YODF5::XVAL, YODF5::XERRM, YODF5::XERRP
+        });
+    } else if (aotype == YODF5::S2D) {
+        field_keys.assign({
+            YODF5::XVAL, YODF5::XERRM, YODF5::XERRP,
+            YODF5::YVAL, YODF5::YERRM, YODF5::YERRP
+        });
+    } else if (aotype == YODF5::CNT) {
+        field_keys.assign({YODF5::SUMW, YODF5::SUMW2, YODF5::NUMENTRIES});
+    } else {
+        fprintf(stderr, "ERROR: type %s is unknown\n", aotype);
+        return ;
+    }
+	for(auto& field: field_keys){
+		cout << field << " ";
+	}
+	cout << endl;
+	
+	cout << "bins: " << n_bins << " " << n_variations << endl;
+    using arr2d_t = xt::xarray<double>; 
+    std::map<std::string, arr2d_t > data_map;
+    for(auto field_key: field_keys) {
+        data_map[field_key] = xt::xarray<double>::from_shape({n_bins, n_variations});
+    }
+	print_shape(data_map[YODF5::SUMW]);
+	cout << data_map[YODF5::SUMW] << endl;
+	data_map[YODF5::SUMW](0, 0) = 12.0;
+	cout << data_map[YODF5::SUMW](0, 0) << endl;
+
+
+    std::vector<std::string> hist_ids;
+    for(const auto& v: variations) {
+        char name[521];
+		if (v != ""){
+			sprintf(name, "%s[%s]", hname.c_str(), v.c_str());
+		} else {
+			sprintf(name, "%s", hname.c_str());
+		}
+		string name_(name);
+        hist_ids.push_back(name_);
+    }
+    cout << "HERE? " << endl;
+    for(int col = 0; col < (int)hist_ids.size(); col++) {
+        auto& hist_name = hist_ids.at(col);
+		printf("checking hist %s\n", hist_name.c_str());
+		AnalysisObject* ao = nullptr;
+		try {
+        	ao = aomap.at(hist_name);
+		} catch(const std::out_of_range& oot){
+			printf("hist %s is missing\n", hist_name.c_str());
+			continue;
+		}
+        std::string this_type = ao->type();
+
+        if(this_type == YODF5::CNT){
+			printf("processing %s %s\n", this_type.c_str(), ao->path().c_str());
+			YODA::Counter* ao_pt = dynamic_cast<YODA::Counter*>(ao);
+			if(ao_pt == 0) {
+				printf("ERROR\n");
+				continue;
+			}
+			printf("%.2f\n", ao_pt->sumW());
+			printf("%.2f %.2f %.2f\n", ao_pt->sumW(), ao_pt->sumW2(), ao_pt->numEntries());
+            data_map[YODF5::SUMW](0, col) = 1.0;
+			printf("HERE\n");
+            data_map[YODF5::SUMWY](0, col) = ao_pt->sumW2();
+            data_map[YODF5::NUMENTRIES](0, col) = ao_pt->numEntries();
+			printf("done with %s\n", this_type.c_str());
+        } else if (this_type == YODF5::H1D) {
+        } else if (this_type == YODF5::H2D) {
+            n_fields = 12;
+        } else if (this_type == YODF5::P1D) {
+            n_fields = 9;
+        } else if (this_type == YODF5::S1D) {
+            n_fields = 3;
+        } else if (this_type == YODF5::S2D) {
+        } else if (this_type == YODF5::CNT) {
+            n_fields = 3;
+        } else {
+            fprintf(stderr, "ERROR: type %s is unknown\n", this_type.c_str());
+            return ;
+        }
+    }
+
 }
 
 
-MatrixXd get_h1d_field_eig(
-        unordered_map<string, AnalysisObject* > aomap,
-        vector<string> const & hnames, vector<string> const & vars, size_t nbins,
-        unordered_map<string, int>  nbinsMap,
-        double (Dbn1D::*function)() const,
-        double (HistoBin1D::*function2)() const
-        )
-{
-    MatrixXd field(vars.size(), nbins);
-    size_t offset(0);
-    for (auto  hn : hnames)
-    {
-        for (size_t j=0; j<vars.size();++j)
-        {
-            std::string varhname = (j>0) ? hn+"["+vars[j]+"]" : hn;
-            if (aomap.count(varhname)>0)
-            {
-                auto h = dynamic_cast<Histo1D*>(aomap[varhname]);
-                field(j, offset  ) = (h->totalDbn().*function)();
-                field(j, offset+1) = (h->overflow().*function)();
-                field(j, offset+2) = (h->underflow().*function)();
-                for (int nb=0;nb< h->numBins();++nb) field(j, offset + 3 + nb) = (h->bin(nb).*function2)();
-                if (j==vars.size()-1) offset += h->numBins() + 3;
-            }
-            else
-            {
-                field(j, offset  ) = 0.0;
-                field(j, offset+1) = 0.0;
-                field(j, offset+2) = 0.0;
-                for (int nb=0;nb< nbinsMap[hn];++nb) field(j, offset + 3 + nb) = 0.0;
-                if (j==vars.size()-1) offset += nbinsMap[hn] + 3;
-            }
-        }
-    }
-    return field;
-}
  
 
-int main(int argc, const char** argv)
+int main(int argc, char** argv)
 {
-    int compression=atoi(argv[1]);
-    std::cerr << argv[1] << "\n";
-    size_t nFiles=argc-2;
-    std::cerr << argv[2] << " "<< nFiles << "\n";
-
-    auto aos = ReaderYODA::create().read(argv[2]);
+    int compression = 1;
+    std::string filename = "Rivet.yoda";
+    std::string outname = "examples.h5";
+    bool help = false;
+    int opt;
+    while ((opt = getopt(argc, argv, "hf:c:")) != -1) {
+        switch(opt) {
+            case 'f':
+                filename = optarg;
+                break;
+            case 'c':
+                compression = atoi(optarg);
+                break;
+            case 'o':
+                outname = optarg;
+                break;
+            case 'h':
+                help = true;
+            default:
+                fprintf(stderr, "Usage: %s [-h] [-f FILENAME] [-c COMPRESSION]\n", argv[0]);
+                if (help) {
+                    printf("    -f FILENAME: input yoda file. Default is \"Rivet.yoda\"\n");
+                    printf("    -c COMPRESSION: compression level. Default is 1\n");
+                    printf("    -h HELP: print help info\n");
+                }
+                exit(EXIT_FAILURE);
+        }
+    }
+    auto aos = ReaderYODA::create().read(filename);
     unordered_map<string, AnalysisObject*> aomap;
     for (auto ao : aos) aomap.insert({ao->path(), ao});
 
     // Determines sorting order --- in a robust application all hnames must be known
-    auto const h1d_names = get_ao_names(aos, "Histo1D");
-    auto const binids    = mk_binids(aomap, h1d_names);
-    auto const vars      = get_variations(aos, h1d_names[0]);
+    auto const hnames = get_ao_names(aos, YODF5::NA);
+    // for(const auto& h1_name: h1d_names) {
+    //     std::cout << h1_name << std::endl;
+    // }
+    std::vector<std::string> const binids    = mk_binids(aos);
+    std::cout << binids[0] << std::endl;
+    auto const vars      = get_variations(aos, hnames[0]);
+
+    std::cout << vars.size() << " variations" << std::endl;
+    std::cout << binids.size() << " bins" << std::endl;
 
 
     std::ifstream instream;
-    instream.open(argv[2]);
+    instream.open(filename);
     // This is a map of AOtype : {hname: nbins} --- runs 10x faster than read -- good for initial survey when
     // running over many files
     auto hmap = myyodaindex(instream);
@@ -349,50 +496,69 @@ int main(int argc, const char** argv)
     auto nbinmap = hmap["Histo1D"];
 
 
-    H5Easy::File file("example.h5", H5Easy::File::ReadWrite | H5Easy::File::Create| H5Easy::File::Truncate);
+    H5Easy::File file(outname, H5Easy::File::ReadWrite | H5Easy::File::Create| H5Easy::File::Truncate);
+    H5Easy::dump(file, YODF5::BINID, binids);
+    H5Easy::dump(file, YODF5::VARIATIONS, vars);
+    // HighFive::File file(outname, H5Easy::File::ReadWrite | H5Easy::File::Create| H5Easy::File::Truncate);
+    // DataSet dataset = file.createDataSet<std::string>(YODF5::BINID, DataSpace::From(binids));
+    // dataset.write(binids);
+    // dataset = file.createDataSet<std::string>(YODF5::VARIATIONS, DataSpace::From(vars));
+    // dataset.write(vars);
+    std::cout << "hist name: " << hnames[0] << std::endl;
+    std::cout << "binids : " << binids.size() << std::endl;
+	fill_dataset(file, aomap, hnames[0], binids, vars);
+    return 0;
     
-    file.createGroup("/Histo1D");
+    // file.create_group("Histo1D")
+    // file.create_group("Histo2D")
+    // file.create_group("Profile1D")
+    // file.create_group("Counter")
+    // file.create_group("Scatter1D")
+    // file.create_group("Scatter2D")
 
-    DataSetCreateProps props;
-    props.add(Deflate(compression));
-    // This is the same chunking strategy h5py applies seemingly
-    props.add(Chunking(std::vector<hsize_t>{
-                size_t(ceil(binids.size()/8.)),
-                size_t(ceil(vars.size()/8.)),
-                size_t(ceil(nFiles/8.))
-                }));
+
+    // DataSetCreateProps props;
+    // props.add(Deflate(compression));
+    // // This is the same chunking strategy h5py applies seemingly
+    // props.add(Chunking(std::vector<hsize_t>{
+    //             size_t(ceil(binids.size()/8.)),
+    //             size_t(ceil(vars.size()/8.)),
+    //             size_t(ceil(nFiles/8.))
+    //             }));
     
-    //DataSetAccessProps cacheConfig;
-    //cacheConfig.add(Caching(1024, 1024, 0.5));
+    // //DataSetAccessProps cacheConfig;
+    // //cacheConfig.add(Caching(1024, 1024, 0.5));
 
-    // Initial DS extends
-    size_t const NB = binids.size();
-    size_t const NV = vars.size();
-    size_t const NF = nFiles;
+    // // Initial DS extends
+    // size_t const NB = binids.size();
+    // size_t const NV = vars.size();
+    // // size_t const NF = nFiles;
 
 
-    // Dataset exttensible in 3rd dim, i.e. nfiles
-    file.createDataSet<double>("/Histo1D/sumW",       DataSpace( { NB, NV, NF},{ NB, NV, DataSpace::UNLIMITED}), props);//, cacheConfig );
-    file.createDataSet<double>("/Histo1D/sumW2",      DataSpace( { NB, NV, NF},{ NB, NV, DataSpace::UNLIMITED}), props);//, cacheConfig );
-    file.createDataSet<double>("/Histo1D/sumWX",      DataSpace( { NB, NV, NF},{ NB, NV, DataSpace::UNLIMITED}), props);//, cacheConfig );
-    file.createDataSet<double>("/Histo1D/sumWX2",     DataSpace( { NB, NV, NF},{ NB, NV, DataSpace::UNLIMITED}), props);//, cacheConfig );
-    file.createDataSet<double>("/Histo1D/numEntries", DataSpace( { NB, NV, NF},{ NB, NV, DataSpace::UNLIMITED}), props);//, cacheConfig );
+    // // Dataset exttensible in 3rd dim, i.e. nfiles
+    // file.createDataSet<double>("/Histo1D/sumW",       DataSpace( { NB, NV},{ NB, NV}), props);//, cacheConfig );
+    // file.createDataSet<double>("/Histo1D/sumW2",      DataSpace( { NB, NV},{ NB, NV}), props);//, cacheConfig );
+    // file.createDataSet<double>("/Histo1D/sumWX",      DataSpace( { NB, NV},{ NB, NV}), props);//, cacheConfig );
+    // file.createDataSet<double>("/Histo1D/sumWX2",     DataSpace( { NB, NV},{ NB, NV}), props);//, cacheConfig );
+    // file.createDataSet<double>("/Histo1D/numEntries", DataSpace( { NB, NV},{ NB, NV}), props);//, cacheConfig );
 
-    // Dummy here, we write the data of the first input file as many times as there are command line arguments
-    for (size_t fidx=0; fidx<NF; ++fidx)
-    {
-        file.getDataSet("/Histo1D/sumW").select(       {0, 0, fidx}, {NB, NV, 1}).write(get_h1d_field_eig(aomap, h1d_names, vars, NB, nbinmap, &Dbn1D::sumW,       &HistoBin1D::sumW));
-        file.getDataSet("/Histo1D/sumW2").select(      {0, 0, fidx}, {NB, NV, 1}).write(get_h1d_field(aomap, h1d_names, vars, NB, nbinmap, &Dbn1D::sumW2,      &HistoBin1D::sumW2));
-        file.getDataSet("/Histo1D/sumWX").select(      {0, 0, fidx}, {NB, NV, 1}).write(get_h1d_field(aomap, h1d_names, vars, NB, nbinmap, &Dbn1D::sumWX,      &HistoBin1D::sumWX));
-        file.getDataSet("/Histo1D/sumWX2").select(     {0, 0, fidx}, {NB, NV, 1}).write(get_h1d_field(aomap, h1d_names, vars, NB, nbinmap, &Dbn1D::sumWX2,     &HistoBin1D::sumWX2));
-        file.getDataSet("/Histo1D/numEntries").select( {0, 0, fidx}, {NB, NV, 1}).write(get_h1d_field(aomap, h1d_names, vars, NB, nbinmap, &Dbn1D::numEntries, &HistoBin1D::numEntries));
-    }
+    // // Dummy here, we write the data of the first input file as many times as there are command line arguments
+    // for (size_t fidx=0; fidx<NF; ++fidx)
+    // {
+    //     file.getDataSet("/Histo1D/sumW").select(       {0, 0, fidx}, {NB, NV, 1}).write(get_h1d_field(aomap, h1d_names, vars, NB, nbinmap, &Dbn1D::sumW,       &HistoBin1D::sumW));
+    //     file.getDataSet("/Histo1D/sumW2").select(      {0, 0, fidx}, {NB, NV, 1}).write(get_h1d_field(aomap, h1d_names, vars, NB, nbinmap, &Dbn1D::sumW2,      &HistoBin1D::sumW2));
+    //     file.getDataSet("/Histo1D/sumWX").select(      {0, 0, fidx}, {NB, NV, 1}).write(get_h1d_field(aomap, h1d_names, vars, NB, nbinmap, &Dbn1D::sumWX,      &HistoBin1D::sumWX));
+    //     file.getDataSet("/Histo1D/sumWX2").select(     {0, 0, fidx}, {NB, NV, 1}).write(get_h1d_field(aomap, h1d_names, vars, NB, nbinmap, &Dbn1D::sumWX2,     &HistoBin1D::sumWX2));
+    //     file.getDataSet("/Histo1D/numEntries").select( {0, 0, fidx}, {NB, NV, 1}).write(get_h1d_field(aomap, h1d_names, vars, NB, nbinmap, &Dbn1D::numEntries, &HistoBin1D::numEntries));
+    // }
     
-    file.createDataSet("Histo1D/xMin",   get_edge(aomap, h1d_names, &HistoBin1D::xMin));
-    file.createDataSet("Histo1D/xMax",   get_edge(aomap, h1d_names, &HistoBin1D::xMax));
+    // file.createDataSet("Histo1D/xMin",   get_edge(aomap, h1d_names, &HistoBin1D::xMin));
+    // file.createDataSet("Histo1D/xMax",   get_edge(aomap, h1d_names, &HistoBin1D::xMax));
     
-    H5Easy::dump(file, "Histo1D/binids", binids);
-    H5Easy::dump(file, "Histo1D/names", h1d_names);
+    // H5Easy::dump(file, "Histo1D/binids", binids);
+    // H5Easy::dump(file, "Histo1D/names", h1d_names);
+
+
     
 
     return 0;

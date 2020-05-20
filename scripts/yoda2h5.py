@@ -223,11 +223,13 @@ def mkBinids(hdict):
             temp = ["{}#{}".format(base, s) for s in suffixes]
 
         binids.extend(temp)
+    print(binids[0])
     return binids
 
 
 
 D = yoda.readYODA(sys.argv[1])
+print(list(D.keys()))
 L = sorted(list(D.keys()))
 
 import re
@@ -252,12 +254,13 @@ for x in var[0]:
     except:
         print(x)
 
-binids = binids = mkBinids(D)
+binids = mkBinids(D)
+exit(0)
+print(VVV)
 
 f = h5py.File("Rivet.h5", "w")
 createDatasets(f, binids, VVV )
 
-hname=central[0]
 for hname in central:
     fillDatasets(f, binids, VVV, D, hname)
 

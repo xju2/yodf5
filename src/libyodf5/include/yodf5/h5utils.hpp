@@ -12,6 +12,8 @@
 
 namespace YODF5{
     namespace H5Utils {
+        void split(std::vector<std::string>& results, 
+            std::string input, const std::string& delimiter);
 
         std::vector<float> get_pdf_sys(
                 const xt::xarray<float>& all_obs_values,

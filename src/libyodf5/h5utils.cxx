@@ -18,7 +18,7 @@
 namespace YODF5{
     namespace H5Utils {
 
-    void split(std::vector<std::string>& results, std::string input, const std::string delimiter){
+    void split(std::vector<std::string>& results, std::string input, const std::string&  delimiter){
         std::string::size_type pos;
         while ( (pos = input.find(delimiter)) != std::string::npos) {
             results.push_back(input.substr(0, pos));

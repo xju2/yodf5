@@ -40,9 +40,9 @@ int main(int argc, char** argv) {
             default:
                 fprintf(stderr, "Usage: %s [-h] [-f FILENAME] [-o OUTPUT_FILENAME]\n", argv[0]);
                 if (help) {
-                    printf("    -f FILENAME : input HDF5 file. Default is \"Rivet.h5\"");
-                    printf("    -o OUTPUT_FILENAME : output HDF5 file. Default is \"Rivet_sys.h5\"");
-                    printf("    -h HELP : print help info");
+                    printf("    -f FILENAME : input HDF5 file. Default is \"Rivet.h5\"\n");
+                    printf("    -o OUTPUT_FILENAME : output HDF5 file. Default is \"Rivet_sys.h5\"\n");
+                    printf("    -h HELP : print help info\n");
                 }
                 exit(EXIT_FAILURE);
         }

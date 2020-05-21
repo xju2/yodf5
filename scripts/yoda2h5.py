@@ -229,7 +229,7 @@ def mkBinids(hdict):
 
 
 D = yoda.readYODA(sys.argv[1])
-print(list(D.keys()))
+# print(list(D.keys()))
 L = sorted(list(D.keys()))
 
 import re
@@ -255,8 +255,9 @@ for x in var[0]:
         print(x)
 
 binids = mkBinids(D)
-exit(0)
-print(VVV)
+print("{} bins and {} variations".format(len(binids), len(VVV)))
+# exit(0)
+# print(VVV)
 
 f = h5py.File("Rivet.h5", "w")
 createDatasets(f, binids, VVV )

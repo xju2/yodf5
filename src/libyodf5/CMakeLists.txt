@@ -7,7 +7,7 @@ target_include_directories(YODF5
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:include>
         )
-target_link_libraries(YODF5 LHAPDF)
+target_link_libraries(YODF5 LHAPDF ${YODA_DIR}/lib/libYODA${CMAKE_SHARED_LIBRARY_SUFFIX})
 
 install(TARGETS YODF5 
         DESTINATION lib

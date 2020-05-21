@@ -68,12 +68,27 @@ int main(int argc, char** argv) {
     xt::col(b, 0) = xt::adapt(tmp, shape);
     cout << xt::col(b, 0) << endl;
 
-    auto array3d = xt::ones<double>({2, 2, 2});
-    auto v1 = xt::view(array3d, 0 , 0, xt::all());
-    cout << v1.dimension() << endl;
-    // double vv = 1.2; // not working for 3d
-    // v1 = vv;
-    cout << xt::view(array3d, 0, 0, xt::all()) << endl;
+	cout << "begin experiment 3" << endl;
+	std::vector<size_t> shape3d = {2, 4, 4};
+	xt::xarray<int> array3d(shape3d, 0);
+    // auto v2 = xt::view(array3d, xt::all() , xt::all(), 1);
+    // auto v2 = xt::view(array3d, 1, xt::all(), xt::range(1, 3));
+
+	// auto v2 = xt::view(array3d, xt::all(), xt::all(), 1); // failed
+	auto v2 = xt::view(array3d, 0, xt::all(), xt::all()); // OK
+    // auto v2 = xt::view(array3d, xt::all(), xt::all(), xt::range(0, 1)); // OK
+    // auto v2 = xt::view(array3d, xt::all(), xt::range(1, 3), xt::all()); // OK
+    // auto v2 = xt::view(array3d, 0, xt::all(), xt::range(1, 3));
+    cout << v2.dimension() << endl;
+	v2(0, 0) = 1;
+	v2 = 3;
+    cout << v2 << endl;
+	std::vector<size_t> shape2d = {4, 2};
+	xt::xarray<int> array2d(shape2d, 0);
+	array2d = v2;
+    cout << array2d << endl;
+	cout << "end experiment 3" << endl;
+
 
 
     xarray<double> a1 = {{0., 1., 2.}, {3., 4., 5.}};
@@ -83,6 +98,7 @@ int main(int argc, char** argv) {
     a1(0, 0) = 12.0;
     cout << tr << endl;
 
+	// a map of xarray
     using arr2d_t = xt::xarray<double>; 
     std::map<std::string, arr2d_t > data_map;
     vector<string> field_keys = {"Sumw2", "Sumw"};
@@ -95,6 +111,13 @@ int main(int argc, char** argv) {
 	data_map["Sumw2"](0, 0) = 12.0;
 	cout << data_map["Sumw2"] << endl;
 
+	cout << "start 5 " << endl;
+	int icc = 12;
+	cout << icc++ << endl;
+	cout << icc << endl;
+	cout << ++icc << endl;
+	cout << icc << endl;
+	cout << "end 5 " << endl;
 
     return 0;
 }

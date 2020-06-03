@@ -15,4 +15,4 @@ install(TARGETS YODF5
 
 file(GLOB HeaderFiles include/yodf5/*.hpp)
 install(FILES ${HeaderFiles}
-    DESTINATION include)
+    DESTINATION include/yodf5)
